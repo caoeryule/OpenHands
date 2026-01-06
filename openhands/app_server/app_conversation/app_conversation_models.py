@@ -179,3 +179,48 @@ class SkillResponse(BaseModel):
     type: Literal['repo', 'knowledge']
     content: str
     triggers: list[str] = []
+
+
+class RuntimeSkillCreateRequest(BaseModel):
+    """Request model for creating a runtime skill."""
+
+    name: str = Field(..., description="Skill name (unique identifier)")
+    type: Literal['knowledge', 'repo', 'task'] = Field(..., description="Skill type")
+    content: str = Field(..., description="Skill content in Markdown format")
+    triggers: list[str] = Field(default_factory=list, description="Trigger keywords for knowledge/task skills")
+    persist: bool = Field(default=False, description="Whether to persist the skill to database")
+
+
+class RuntimeSkillUpdateRequest(BaseModel):
+    """Request model for updating a runtime skill."""
+
+    content: str | None = Field(None, description="Updated skill content")
+    triggers: list[str] | None = Field(None, description="Updated trigger keywords")
+
+
+class RuntimeSkillResponse(BaseModel):
+    """Response model for runtime skill."""
+
+    name: str
+    type: Literal['knowledge', 'repo', 'task']
+    content: str
+    triggers: list[str] = []
+    source: Literal['runtime', 'file', 'global', 'user', 'repo'] = 'runtime'
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+    is_active: bool = True
+
+
+class RuntimeSkillsListResponse(BaseModel):
+    """Response model for listing all skills."""
+
+    skills: list[RuntimeSkillResponse]
+
+
+class RuntimeSkillPersistRequest(BaseModel):
+    """Request model for persisting a runtime skill."""
+
+    location: Literal['user', 'repo'] = Field(
+        default='user',
+        description="Where to persist the skill: user (~/.openhands/skills/) or repo (.openhands/skills/)"
+    )

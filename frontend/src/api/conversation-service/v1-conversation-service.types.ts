@@ -103,9 +103,10 @@ export interface V1AppConversation {
 
 export interface Skill {
   name: string;
-  type: "repo" | "knowledge";
+  type: "repo" | "knowledge" | "task";
   content: string;
   triggers: string[];
+  source?: "runtime" | "file" | "global" | "user" | "repo";
 }
 
 export interface GetSkillsResponse {
