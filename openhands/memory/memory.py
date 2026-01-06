@@ -49,6 +49,9 @@ class Memory:
     loop: asyncio.AbstractEventLoop | None
     repo_microagents: dict[str, RepoMicroagent]
     knowledge_microagents: dict[str, KnowledgeMicroagent]
+    # Runtime skills management
+    runtime_skills: dict[str, KnowledgeMicroagent | RepoMicroagent]
+    skill_sources: dict[str, str]  # Track source: global/user/repo/runtime
 
     def __init__(
         self,
@@ -70,6 +73,10 @@ class Memory:
         # Additional placeholders to store user workspace microagents
         self.repo_microagents = {}
         self.knowledge_microagents = {}
+        
+        # Runtime skills storage (session-level, cleared on restart)
+        self.runtime_skills = {}
+        self.skill_sources = {}  # Track source of each skill
 
         # Store repository / runtime info to send them to the templating later
         self.repository_info: RepositoryInfo | None = None
@@ -254,8 +261,28 @@ class Memory:
         if not query:
             return recalled_content
 
-        # Search for microagent triggers in the query
+        # Priority order: runtime > repo > user > global
+        # First check runtime skills (highest priority)
+        for name, microagent in self.runtime_skills.items():
+            if isinstance(microagent, KnowledgeMicroagent):
+                trigger = microagent.match_trigger(query)
+                if trigger:
+                    logger.info("Runtime microagent '%s' triggered by keyword '%s'", name, trigger)
+                    recalled_content.append(
+                        MicroagentKnowledge(
+                            name=microagent.name,
+                            trigger=trigger,
+                            content=microagent.content,
+                        )
+                    )
+                    # Skip checking lower priority skills with same name
+                    continue
+
+        # Then check regular knowledge microagents (if not already found in runtime)
         for name, microagent in self.knowledge_microagents.items():
+            # Skip if already found in runtime skills
+            if name in self.runtime_skills:
+                continue
             trigger = microagent.match_trigger(query)
             if trigger:
                 logger.info("Microagent '%s' triggered by keyword '%s'", name, trigger)
@@ -402,3 +429,104 @@ class Memory:
         """Sends a status message to the client."""
         if self.status_callback:
             self.status_callback(msg_type, runtime_status, message)
+
+    # Runtime Skills Management Methods
+    def add_runtime_skill(
+        self, skill: KnowledgeMicroagent | RepoMicroagent
+    ) -> None:
+        """Add a runtime skill to memory.
+        
+        Runtime skills have the highest priority and will override
+        skills with the same name from other sources.
+        
+        Args:
+            skill: The microagent skill to add
+        """
+        logger.info(f"Adding runtime skill: {skill.name}")
+        self.runtime_skills[skill.name] = skill
+        self.skill_sources[skill.name] = 'runtime'
+        
+    def update_runtime_skill(
+        self, name: str, skill: KnowledgeMicroagent | RepoMicroagent
+    ) -> bool:
+        """Update an existing runtime skill.
+        
+        Args:
+            name: Name of the skill to update
+            skill: New skill content
+            
+        Returns:
+            True if updated successfully, False if skill doesn't exist
+        """
+        if name not in self.runtime_skills:
+            logger.warning(f"Attempted to update non-existent runtime skill: {name}")
+            return False
+        
+        logger.info(f"Updating runtime skill: {name}")
+        self.runtime_skills[name] = skill
+        return True
+        
+    def remove_runtime_skill(self, name: str) -> bool:
+        """Remove a runtime skill from memory.
+        
+        Args:
+            name: Name of the skill to remove
+            
+        Returns:
+            True if removed successfully, False if skill doesn't exist
+        """
+        if name not in self.runtime_skills:
+            logger.warning(f"Attempted to remove non-existent runtime skill: {name}")
+            return False
+        
+        logger.info(f"Removing runtime skill: {name}")
+        del self.runtime_skills[name]
+        if name in self.skill_sources:
+            del self.skill_sources[name]
+        return True
+        
+    def get_runtime_skill(self, name: str) -> KnowledgeMicroagent | RepoMicroagent | None:
+        """Get a specific runtime skill by name.
+        
+        Args:
+            name: Name of the skill to retrieve
+            
+        Returns:
+            The skill if found, None otherwise
+        """
+        return self.runtime_skills.get(name)
+        
+    def get_all_skills_with_source(self) -> dict[str, tuple[BaseMicroagent, str]]:
+        """Get all skills (runtime, repo, knowledge) with their sources.
+        
+        Returns:
+            Dictionary mapping skill name to (skill, source) tuple
+            where source is one of: 'runtime', 'repo', 'user', 'global'
+        """
+        result: dict[str, tuple[BaseMicroagent, str]] = {}
+        
+        # Start with runtime skills (highest priority)
+        for name, skill in self.runtime_skills.items():
+            result[name] = (skill, 'runtime')
+        
+        # Add repo microagents
+        for name, skill in self.repo_microagents.items():
+            if name not in result:  # Don't override runtime skills
+                source = self.skill_sources.get(name, 'repo')
+                result[name] = (skill, source)
+        
+        # Add knowledge microagents
+        for name, skill in self.knowledge_microagents.items():
+            if name not in result:  # Don't override higher priority skills
+                source = self.skill_sources.get(name, 'global')
+                result[name] = (skill, source)
+        
+        return result
+        
+    def list_runtime_skills(self) -> list[str]:
+        """List all runtime skill names.
+        
+        Returns:
+            List of runtime skill names
+        """
+        return list(self.runtime_skills.keys())
